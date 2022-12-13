@@ -10,11 +10,11 @@ IF EXISTS (
 DROP DATABASE [KB301_Bobeshko]  
 GO  
   
-alter database [KB301_Bobeshko] set single_user with rollback immediate  
+--alter database [KB301_Bobeshko] set single_user with rollback immediate  
 
   
 CREATE DATABASE [KB301_Bobeshko]  
-GO  
+GO		
   
 USE [KB301_Bobeshko]  
 GO  
@@ -120,10 +120,7 @@ CREATE TRIGGER PolicePost_Insert
 					ORDER BY timeOfEvent DESC 
 
 			IF (DATEDIFF(mi, @oldTimeEvent, @newTimeEvent) < 5) OR (@oldCarStatus LIKE @newCarStatus)
-			BEGIN 
-				PRINT(DATEDIFF(mi, @newTimeEvent, @oldTimeEvent));
-				RAISERROR('Время меьше 5 минут или направление совпадает', 1, 0);
-			END
+				THROW 55555, 'Время меьше 5 минут или направление совпадает', 1;
 			ELSE
 			BEGIN
 				INSERT INTO [KB301_Bobeshko].Task3.PolicePost
@@ -139,7 +136,7 @@ CREATE TRIGGER PolicePost_Insert
 				AND regionCode = (SELECT carRegionCode FROM inserted))
 			BEGIN 
 				INSERT INTO [KB301_Bobeshko].Task3.CarNumber
-					(carNumber, regionCode) SELECT  carNumber, carRegionCode 
+					(carNumber, regionCode) SELECT  UPPER(carNumber), carRegionCode 
 					FROM inserted
 			END
 			INSERT INTO [KB301_Bobeshko].Task3.PolicePost
@@ -147,7 +144,8 @@ CREATE TRIGGER PolicePost_Insert
 					SELECT timeOfEvent, postId,  carStatus, carNumber, carRegionCode 
 					FROM inserted
 		END
-GO 
+GO
+
 
 CREATE TRIGGER CarNumber_Insert
 	ON [KB301_Bobeshko].Task3.CarNumber
@@ -162,13 +160,13 @@ CREATE TRIGGER CarNumber_Insert
 			(carNumber, regionCode) SELECT UPPER(carNumber), regionCode FROM inserted
 		END 
 		ELSE 
-			RAISERROR ('Такого региона не существует', 1, 0);
+			THROW 55555, 'Такого региона не существует', 1;
 GO
 
 
 CREATE PROCEDURE AddPostEvent
 	@postId INT, 
-	@timeOfEvent TIME, 
+	@timeOfEvent VARCHAR(8), 
 	@carStatus VARCHAR(3), 
 	@carNumber VARCHAR(6), 
 	@carRegionCode VARCHAR(3)
@@ -178,6 +176,9 @@ CREATE PROCEDURE AddPostEvent
 			VALUES (@timeOfEvent, @postId , @carStatus, @carNumber, @carRegionCode)
 	END
 GO
+
+
+--DROP PROCEDURE AddPostEvent
 
 CREATE PROCEDURE CreateCarNumber
 	@carNumber VARCHAR(6),
@@ -212,61 +213,114 @@ CREATE PROCEDURE AddOtherRegionCode
 	END
 GO
 
---Добавление корректных регионов
-EXEC AddRegion 'Челябинская обл.', '74'
-EXEC AddRegion 'Свердловская обл.', '66'
-EXEC AddRegion 'Башкортостан респ.', '02'
-
---Добавление неккоректного региона
-EXEC AddRegion 'Тюменская обл.', '999'
-
---Добавление дополнительных кодов регионов
-EXEC AddOtherRegionCode '74', '174'
-EXEC AddOtherRegionCode '74', '774'
-EXEC AddOtherRegionCode '66', '96'
-EXEC AddOtherRegionCode '66', '196'
-EXEC AddOtherRegionCode '02', '102'
-EXEC AddOtherRegionCode '74', '702'
-
---Добавление новой корректной машины
-EXEC CreateCarNumber 'У191УК', '174'
-
---Добавление неккоректного дополнительного кода
-EXEC AddOtherRegionCode '74', '999'
-
---Добавление новой машины с неккоретным номером
-EXEC CreateCarNumber 'У000УК', '174'
-
---Добавление новой машины с неккоретным кодом региона
-EXEC CreateCarNumber 'У191УК', '999'
-
---Добавление новой машины с неккоретными буквами
-EXEC CreateCarNumber 'GG191G', '174'
-
---Добавление записи в таблицу Поста ГАИ
-DECLARE @time time(0) = CAST('12:00:00' AS time(0))
-EXEC AddPostEvent 1,  @time, 'IN', 'У191УК', '174' 
-
---Выезд машины из города более чем через 5 минут
-DECLARE @time time(0) = CAST('13:15:00' AS time(0))
-EXEC AddPostEvent 1,  @time, 'OUT', 'У191УК', '174' 
-
---Выезд машины из города менее чем через 5 минут
-DECLARE @time time(0) = CAST('13:16:00' AS time(0))
-EXEC AddPostEvent 1,  @time, 'IN', 'У191УК', '174' 
-
---Выезд машины из города менее в неккоректном направлении
-DECLARE @time time(0) = CAST('14:15:00' AS time(0))
-EXEC AddPostEvent 1,  @time, 'OUT', 'У191УК', '174' 
+/*
+SELECT carNumber + carRegionCode AS 'Номер машины', carStatus, postId, timeOfEvent 
+	FROM [KB301_Bobeshko].Task3.PolicePost 
+	GROUP BY carNumber + carRegionCode, carStatus, postId, timeOfEvent
+GO	
+*/
 
 
---Вьезд машины которой нет в таблице CarNumber
-DECLARE @time time(0) = CAST('14:15:00' AS time(0))
-EXEC AddPostEvent 2,  @time, 'IN', 'А001АА', '66' 
 
---Вьезд машины с некорректным номером
-DECLARE @time time(0) = CAST('01:00:00' AS time(0))
-EXEC AddPostEvent 2,  @time, 'IN', 'А000АА', '102' 
+CREATE VIEW TransitCarsThrough174
+	AS 
+	SELECT postId AS 'Номер поста', 
+		UPPER(carNumber + carRegionCode) AS 'Номер машины',
+		timeOfEvent AS 'Время',
+		carStatus AS 'Направление'
+		FROM Task3.PolicePost
+		JOIN(
+			SELECT	CAST(postId AS VARCHAR) + ' ' 
+										+ carNumber + ' '
+										+ carRegionCode AS 'Номер поста, номер автомобиля', 
+					COUNT(postId) AS 'Количество проездов'
+			FROM Task3.PolicePost
+		JOIN(
+			SELECT carNumber + carRegionCode AS 'Номер автомобиля' 
+							FROM Task3.PolicePost 
+							GROUP BY carNumber + carRegionCode
+							HAVING COUNT(*) > 1) AS Temp 
+							ON PolicePost.carNumber + PolicePost.carRegionCode = Temp.[Номер автомобиля]
+				WHERE carRegionCode != '74' and carRegionCode != '174' and carRegionCode != '774'
+				GROUP BY CAST(PolicePost.postId AS VARCHAR) + ' ' 
+					+ PolicePost.carNumber + ' ' 
+					 + PolicePost.carRegionCode
+					HAVING COUNT(postId) = 1) AS Temp
+				ON Temp.[Номер поста, номер автомобиля] = CAST(PolicePost.postId AS VARCHAR) + ' ' 
+														+ PolicePost.carNumber + ' '
+														+ PolicePost.carRegionCode
+		JOIN Task3.RegionCodes ON PolicePost.carRegionCode = RegionCodes.otherRegionCode
+		JOIN Task3.Regions ON Task3.RegionCodes.regionCode = Regions.regionCode
+GO
 
-SELECT * FROM Task3.PolicePost
-SELECT * FROM Task3.RegionCodes ORDER BY regionCode, otherRegionCode
+DROP VIEW NonResidentCars174
+CREATE VIEW NonResidentCars174
+	AS 
+	SELECT postId AS 'Номер поста', 
+		UPPER(carNumber + carRegionCode) AS 'Номер машины',
+		timeOfEvent AS 'Время',
+		carStatus AS 'Направление'
+		FROM Task3.PolicePost
+	JOIN(SELECT	CAST(postId AS VARCHAR) + ' ' 
+										+ carNumber + ' '
+										+ carRegionCode AS 'Номер поста, номер автомобиля', 
+					COUNT(postId) AS 'Количество проездов'
+				FROM Task3.PolicePost
+	JOIN(SELECT carNumber + carRegionCode AS 'Номер автомобиля' 
+						FROM Task3.PolicePost GROUP BY carNumber + carRegionCode
+						HAVING COUNT(*) > 1) AS Temp 
+					ON PolicePost.carNumber + PolicePost.carRegionCode = Temp.[Номер автомобиля]
+			WHERE carRegionCode != '74' and carRegionCode != '174' and carRegionCode != '774'
+			GROUP BY CAST(PolicePost.postId AS VARCHAR) + ' ' 
+					+ PolicePost.carNumber + ' ' 
+					 + PolicePost.carRegionCode
+				HAVING COUNT(postId) = 2) AS Temp
+			ON Temp.[Номер поста, номер автомобиля] = CAST(PolicePost.postId as varchar) + ' ' 
+													+ PolicePost.carNumber + ' '
+													+ PolicePost.carRegionCode
+			JOIN Task3.RegionCodes ON PolicePost.carRegionCode = RegionCodes.otherRegionCode
+			JOIN Task3.Regions ON Task3.RegionCodes.regionCode = Regions.regionCode
+GO
+
+SELECT * FROM NonResidentCars174 ORDER BY [Номер машины]
+
+
+CREATE VIEW ResidentCars174
+	AS 
+	SELECT postId AS 'Номер поста', 
+		UPPER(carNumber + carRegionCode) AS 'Номер машины',
+		timeOfEvent AS 'Время',
+		carStatus AS 'Направление'
+		FROM Task3.PolicePost
+	JOIN(SELECT CAST(postId AS VARCHAR) + ' ' 
+										+ carNumber + ' '
+										+ carRegionCode AS 'Номер поста, номер автомобиля', 
+					COUNT(postId) AS 'Количество проездов'
+				FROM Task3.PolicePost
+	JOIN(SELECT carNumber + carRegionCode AS 'Номер автомобиля' 
+						FROM Task3.PolicePost GROUP BY carNumber + carRegionCode
+						HAVING COUNT(*) > 1) AS Temp 
+					ON PolicePost.carNumber + PolicePost.carRegionCode = Temp.[Номер автомобиля]
+			WHERE carRegionCode = '74' OR carRegionCode = '174' OR carRegionCode = '774'
+			GROUP BY CAST(PolicePost.postId AS VARCHAR) + ' ' 
+					+ PolicePost.carNumber + ' ' 
+					 + PolicePost.carRegionCode) AS Temp
+			ON Temp.[Номер поста, номер автомобиля] = CAST(PolicePost.postId as varchar) + ' ' 
+													+ PolicePost.carNumber + ' '
+													+ PolicePost.carRegionCode
+			JOIN Task3.RegionCodes ON PolicePost.carRegionCode = RegionCodes.otherRegionCode
+			JOIN Task3.Regions ON Task3.RegionCodes.regionCode = Regions.regionCode
+GO
+
+
+
+
+SELECT * FROM ResidentCars174 ORDER BY [Номер машины]
+
+CREATE VIEW Cars
+	AS 
+	SELECT postId AS 'Номер поста', 
+		UPPER(carNumber + carRegionCode) AS 'Номер машины',
+		timeOfEvent AS 'Время',
+		carStatus AS 'Направление'
+		FROM Task3.PolicePost
